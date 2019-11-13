@@ -46,7 +46,7 @@ void usage()
 }
 
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
-			  struct nfq_data *nfa, void *block_host)
+			  struct nfq_data *nfa, void *args)
 {
 	struct nfqnl_msg_packet_hdr *ph;
 	struct pkt_buff *pkt;
@@ -75,14 +75,14 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 		tcp_payload_len = nfq_tcp_get_payload_len(tcp, pkt) - tcp->doff * 4;
 		if (tcp_payload_len > 0){
 			tcp_payload = (uint8_t *)nfq_tcp_get_payload(tcp, pkt);
-
 			for (int i = 0; i < METHOD_CNT; i++){
 				if (!memcmp(tcp_payload, http_methods[i], methods_len[i])){
 					host = std::string(reinterpret_cast<char*>(tcp_payload));
 					if (host.find("Host: ") != std::string::npos){
 						host = host.substr(host.find("Host: ")+6);
+						host = host.substr(0, host.find("\r\n"));
 						if(blocked_host.find(host) != blocked_host.end()){
-							std::cout << "Blocked host " <<  host;
+							std::cout << "Blocked host " << host << std::endl;
 							pktb_free(pkt);
 							return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
 						}
@@ -101,7 +101,6 @@ int main(int argc, char *argv[])
 	struct nfq_handle *h;
 	struct nfq_q_handle *qh;
 	char buf[4096] __attribute__((aligned));
-	char *block_host;
 	int fd;
 	int rv;
 
@@ -112,6 +111,7 @@ int main(int argc, char *argv[])
 	}
 
 	process_host_file(argv[1]);
+	std::cout << "Read host file done!" << std::endl;
 
 	h = nfq_open();
 	if (!h)
@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	qh = nfq_create_queue(h, 0, &cb, block_host);
+	qh = nfq_create_queue(h, 0, &cb, nullptr);
 	if (!qh)
 	{
 		fprintf(stderr, "error during nfq_create_queue()\n");
@@ -145,8 +145,8 @@ int main(int argc, char *argv[])
 	}
 
 	fd = nfq_fd(h);
-	puts("HELLO");
 
+	std::cout << "Applying filtering rule now" << std::endl;
 	while (1)
 	{
 		if ((rv = recv(fd, buf, sizeof(buf), 0)) >= 0)
